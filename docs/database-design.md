@@ -134,7 +134,7 @@ Stores task collection containers owned by individual users.
 | Column | Type | Nullable | Default | Constraints & References | Description |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | No | `gen_random_uuid()` | `PRIMARY KEY` | Unique project identifier |
-| `user_id` | `UUID` | No | None | `REFERENCES auth.users(id) ON DELETE CASCADE` | Owner user identifier |
+| `user_id` | `UUID` | No | `auth.uid()` | `REFERENCES auth.users(id) ON DELETE CASCADE` | Owner user identifier |
 | `name` | `TEXT` | No | None | `CHECK (char_length(trim(name)) > 0)` | Name of the project (non-empty) |
 | `description` | `TEXT` | Yes | `NULL` | None | Markdown/plain text description |
 | `color` | `TEXT` | Yes | `NULL` | `CHECK (color IS NULL OR color ~* '^#[0-9a-f]{6}$')` | Optional hex color code (e.g. `#3B82F6`) |
@@ -142,8 +142,10 @@ Stores task collection containers owned by individual users.
 | `created_at` | `TIMESTAMPTZ`| No | `now()` | None | Record creation timestamp |
 | `updated_at` | `TIMESTAMPTZ`| No | `now()` | None | Record update timestamp |
 
-**Additional Constraints:**
+**Additional Constraints & Triggers:**
 * `projects_id_user_id_key UNIQUE (id, user_id)`: Enables composite foreign key enforcement from `tasks`.
+* `trg_projects_prevent_user_id_change`: Prohibits modifying `user_id` on update.
+* `trg_projects_enforce_user_id`: Automatically sets `user_id := auth.uid()` when missing on insert.
 
 ---
 
@@ -153,7 +155,7 @@ Stores root tasks and hierarchical subtasks.
 | Column | Type | Nullable | Default | Constraints & References | Description |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | No | `gen_random_uuid()` | `PRIMARY KEY` | Unique task identifier |
-| `user_id` | `UUID` | No | None | `REFERENCES auth.users(id) ON DELETE CASCADE` | Owner user identifier |
+| `user_id` | `UUID` | No | `auth.uid()` | `REFERENCES auth.users(id) ON DELETE CASCADE` | Owner user identifier |
 | `project_id` | `UUID` | Yes | `NULL` | Composite FK to `projects(id, user_id)` | Container project (NULL = Inbox) |
 | `parent_id` | `UUID` | Yes | `NULL` | Composite FK to `tasks(id, user_id)` | Parent task (NULL = Root task) |
 | `title` | `TEXT` | No | None | `CHECK (char_length(trim(title)) > 0)` | Task title (non-empty) |
@@ -167,11 +169,14 @@ Stores root tasks and hierarchical subtasks.
 | `created_at` | `TIMESTAMPTZ`| No | `now()` | None | Record creation timestamp |
 | `updated_at` | `TIMESTAMPTZ`| No | `now()` | None | Record update timestamp |
 
-**Integrity Constraints:**
+**Integrity Constraints & Triggers:**
 * `tasks_id_user_id_key UNIQUE (id, user_id)`: Composite key supporting subtask and checklist composite FKs.
 * `tasks_no_self_parent CHECK (parent_id IS NULL OR parent_id <> id)`: Guard against immediate self-referencing.
 * `tasks_project_fkey FOREIGN KEY (project_id, user_id) REFERENCES projects(id, user_id) ON DELETE CASCADE`: Guarantees task cannot reference a project owned by another user.
 * `tasks_parent_fkey FOREIGN KEY (parent_id, user_id) REFERENCES tasks(id, user_id) ON DELETE CASCADE`: Guarantees task cannot reference a parent owned by another user.
+* `trg_tasks_prevent_user_id_change`: Prohibits modifying `user_id` on update.
+* `trg_tasks_enforce_user_id`: Automatically sets `user_id := auth.uid()` when missing on insert.
+* `trg_cascade_descendant_project`: Propagates `project_id` changes to subtasks when parent task moves project.
 
 ---
 
@@ -181,7 +186,7 @@ Stores optional lightweight checklist items attached to any task.
 | Column | Type | Nullable | Default | Constraints & References | Description |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | No | `gen_random_uuid()` | `PRIMARY KEY` | Unique checklist item ID |
-| `user_id` | `UUID` | No | None | `REFERENCES auth.users(id) ON DELETE CASCADE` | Owner user identifier |
+| `user_id` | `UUID` | No | `auth.uid()` | `REFERENCES auth.users(id) ON DELETE CASCADE` | Owner user identifier |
 | `task_id` | `UUID` | No | None | Composite FK to `tasks(id, user_id)` | Parent task identifier |
 | `title` | `TEXT` | No | None | `CHECK (char_length(trim(title)) > 0)` | Checklist item text |
 | `is_completed`| `BOOLEAN` | No | `FALSE` | None | Completion status |
@@ -189,8 +194,10 @@ Stores optional lightweight checklist items attached to any task.
 | `created_at` | `TIMESTAMPTZ`| No | `now()` | None | Record creation timestamp |
 | `updated_at` | `TIMESTAMPTZ`| No | `now()` | None | Record update timestamp |
 
-**Integrity Constraints:**
+**Integrity Constraints & Triggers:**
 * `checklist_task_fkey FOREIGN KEY (task_id, user_id) REFERENCES tasks(id, user_id) ON DELETE CASCADE`: Guarantees checklist item cannot be attached to another user's task.
+* `trg_checklist_prevent_user_id_change`: Prohibits modifying `user_id` on update.
+* `trg_checklist_enforce_user_id`: Automatically sets `user_id := auth.uid()` when missing on insert.
 
 ---
 

@@ -26,9 +26,15 @@ Use this checklist to verify that all database objects have been created success
 - [ ] **Views & Indexes:**
   - [ ] View `tasks_with_progress` configured with `security_invoker = true`.
   - [ ] Indexes created on `projects(user_id, is_archived)`, `tasks(user_id, project_id, parent_id, sort_order)`, `tasks(user_id, parent_id, sort_order)`, `task_checklist_items(user_id, task_id, position)`, and partial indexes for inbox and due dates.
-- [ ] **Row Level Security:**
+- [ ] **Row Level Security & Ownership Defaults (Migration 5):**
+  - [ ] `projects.user_id`, `tasks.user_id`, `task_checklist_items.user_id` default to `auth.uid()`.
+  - [ ] Triggers `trg_*_prevent_user_id_change` prevent modification of `user_id` on update (`restrict_violation`).
+  - [ ] Triggers `trg_*_enforce_user_id` automatically assign `auth.uid()` if missing on insert, and reject unauthenticated inserts.
+  - [ ] Trigger `trg_cascade_descendant_project` cascades parent task's `project_id` to subtasks.
+  - [ ] Table `quarantined_unowned_records` exists to preserve unresolved legacy data.
   - [ ] RLS enabled and forced on `projects`, `tasks`, `task_checklist_items`.
   - [ ] CRUD policies applied strictly to `authenticated` matching `auth.uid() = user_id`.
+  - [ ] Anonymous (`anon`) role has zero permissions.
 
 ---
 

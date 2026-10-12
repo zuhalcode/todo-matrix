@@ -16,17 +16,19 @@ export default async function DashboardPage() {
     redirect('/auth');
   }
 
-  // Fetch initial projects
+  // Fetch initial projects for the authenticated user
   const { data: projectsData } = await supabase
     .from('projects')
     .select('*')
+    .eq('user_id', user.id)
     .eq('is_archived', false)
     .order('created_at', { ascending: false });
 
-  // Fetch initial tasks from authoritative view tasks_with_progress
+  // Fetch initial tasks from authoritative view tasks_with_progress for the authenticated user
   const { data: tasksData } = await supabase
     .from('tasks_with_progress')
     .select('*')
+    .eq('user_id', user.id)
     .order('sort_order', { ascending: true });
 
   const initialProjects: Project[] = (projectsData as Project[]) || [];

@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Project } from '@/types/database';
-import { CreateProjectSchema, type CreateProjectInput, type UpdateProjectInput } from '@/types/todo';
+import {
+  CreateProjectSchema,
+  UpdateProjectSchema,
+  type CreateProjectInput,
+  type UpdateProjectInput,
+} from '@/types/todo';
 
 export class ProjectsService {
   /**
@@ -8,9 +13,19 @@ export class ProjectsService {
    */
   static async getProjects(supabase: SupabaseClient): Promise<{ data: Project[] | null; error: string | null }> {
     try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        return { data: null, error: 'Unauthorized: No authenticated user session.' };
+      }
+
       const { data, error } = await supabase
         .from('projects')
         .select('*')
+        .eq('user_id', user.id)
         .eq('is_archived', false)
         .order('created_at', { ascending: false });
 
@@ -23,7 +38,8 @@ export class ProjectsService {
   }
 
   /**
-   * Creates a new project with user ownership.
+   * Creates a new project with authoritative user ownership.
+   * Derives owner identity directly from the authenticated Supabase session.
    */
   static async createProject(
     supabase: SupabaseClient,
@@ -36,10 +52,19 @@ export class ProjectsService {
     }
 
     try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        return { data: null, error: 'Unauthorized: No authenticated user session.' };
+      }
+
       const { data, error } = await supabase
         .from('projects')
         .insert({
-          user_id: userId,
+          user_id: user.id,
           name: parsed.data.name,
           description: parsed.data.description || null,
           color: parsed.data.color || null,
@@ -62,18 +87,33 @@ export class ProjectsService {
   }
 
   /**
-   * Updates an existing project.
+   * Updates an existing project owned by the authenticated user.
    */
   static async updateProject(
     supabase: SupabaseClient,
     projectId: string,
     input: UpdateProjectInput
   ): Promise<{ data: Project | null; error: string | null }> {
+    const parsed = UpdateProjectSchema.safeParse(input);
+    if (!parsed.success) {
+      return { data: null, error: parsed.error.issues[0]?.message || 'Invalid update data' };
+    }
+
     try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        return { data: null, error: 'Unauthorized: No authenticated user session.' };
+      }
+
       const { data, error } = await supabase
         .from('projects')
-        .update(input)
+        .update(parsed.data)
         .eq('id', projectId)
+        .eq('user_id', user.id)
         .select()
         .single();
 
@@ -86,14 +126,28 @@ export class ProjectsService {
   }
 
   /**
-   * Deletes a project (cascades to all contained tasks in database).
+   * Deletes a project (cascades to all contained tasks in database) owned by the authenticated user.
    */
   static async deleteProject(
     supabase: SupabaseClient,
     projectId: string
   ): Promise<{ success: boolean; error: string | null }> {
     try {
-      const { error } = await supabase.from('projects').delete().eq('id', projectId);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        return { success: false, error: 'Unauthorized: No authenticated user session.' };
+      }
+
+      const { error } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', projectId)
+        .eq('user_id', user.id);
+
       if (error) return { success: false, error: error.message };
       return { success: true, error: null };
     } catch (err: unknown) {

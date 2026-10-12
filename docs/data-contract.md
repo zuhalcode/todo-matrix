@@ -131,6 +131,7 @@ The application should read progress directly from the `tasks_with_progress` vie
 const { data: projects, error } = await supabase
   .from('projects')
   .select('*')
+  .eq('user_id', user.id)
   .eq('is_archived', false)
   .order('created_at', { ascending: false });
 ```
@@ -140,6 +141,7 @@ const { data: projects, error } = await supabase
 const { data: tasks, error } = await supabase
   .from('tasks_with_progress')
   .select('*')
+  .eq('user_id', user.id)
   .eq('project_id', projectId)
   .is('parent_id', null)
   .order('sort_order', { ascending: true });
@@ -150,6 +152,7 @@ const { data: tasks, error } = await supabase
 const { data: subtasks, error } = await supabase
   .from('tasks_with_progress')
   .select('*')
+  .eq('user_id', user.id)
   .eq('parent_id', parentId)
   .order('sort_order', { ascending: true });
 ```
@@ -159,6 +162,7 @@ const { data: subtasks, error } = await supabase
 const { data: items, error } = await supabase
   .from('task_checklist_items')
   .select('*')
+  .eq('user_id', user.id)
   .eq('task_id', taskId)
   .order('position', { ascending: true });
 ```

@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { TaskStatus, TaskWithProgress } from '@/types/database';
-import { CreateTaskSchema, type CreateTaskInput, type UpdateTaskInput } from '@/types/todo';
+import {
+  CreateTaskSchema,
+  UpdateTaskSchema,
+  type CreateTaskInput,
+  type UpdateTaskInput,
+} from '@/types/todo';
 
 export interface GetTasksOptions {
   projectId?: string | null;
@@ -11,14 +16,26 @@ export interface GetTasksOptions {
 export class TasksService {
   /**
    * Fetches tasks from the authoritative `tasks_with_progress` view.
-   * Inherits RLS automatically via security_invoker = true.
+   * Scoped to the authenticated user.
    */
   static async getTasksWithProgress(
     supabase: SupabaseClient,
     options: GetTasksOptions = {}
   ): Promise<{ data: TaskWithProgress[] | null; error: string | null }> {
     try {
-      let query = supabase.from('tasks_with_progress').select('*');
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        return { data: null, error: 'Unauthorized: No authenticated user session.' };
+      }
+
+      let query = supabase
+        .from('tasks_with_progress')
+        .select('*')
+        .eq('user_id', user.id);
 
       if (options.projectId !== undefined) {
         if (options.projectId === null) {
@@ -49,8 +66,9 @@ export class TasksService {
   }
 
   /**
-   * Creates a root task or subtask.
-   * Triggers automatically validate cycles, set depth (<=5), and inherit parent's project_id.
+   * Creates a root task or subtask with verified user ownership.
+   * Validates relational boundaries (project_id and parent_id belong to user)
+   * and derives owner identity directly from the authenticated session.
    */
   static async createTask(
     supabase: SupabaseClient,
@@ -63,10 +81,46 @@ export class TasksService {
     }
 
     try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        return { data: null, error: 'Unauthorized: No authenticated user session.' };
+      }
+
+      // Pre-validate relational ownership boundaries
+      if (parsed.data.project_id) {
+        const { data: project } = await supabase
+          .from('projects')
+          .select('id')
+          .eq('id', parsed.data.project_id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (!project) {
+          return { data: null, error: 'Selected project not found or belongs to another user.' };
+        }
+      }
+
+      if (parsed.data.parent_id) {
+        const { data: parentTask } = await supabase
+          .from('tasks')
+          .select('id, depth')
+          .eq('id', parsed.data.parent_id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (!parentTask) {
+          return { data: null, error: 'Selected parent task not found or belongs to another user.' };
+        }
+      }
+
       const { data: inserted, error } = await supabase
         .from('tasks')
         .insert({
-          user_id: userId,
+          user_id: user.id,
           title: parsed.data.title,
           description: parsed.data.description || null,
           project_id: parsed.data.project_id || null,
@@ -83,11 +137,12 @@ export class TasksService {
         return { data: null, error: TasksService.mapDatabaseError(error) };
       }
 
-      // Read back with progress from view
+      // Read back with progress from view scoped to user
       const { data: taskWithProgress } = await supabase
         .from('tasks_with_progress')
         .select('*')
         .eq('id', inserted.id)
+        .eq('user_id', user.id)
         .single();
 
       return { data: taskWithProgress as TaskWithProgress, error: null };
@@ -98,18 +153,61 @@ export class TasksService {
   }
 
   /**
-   * Updates an existing task's fields.
+   * Updates an existing task's fields for the authenticated user.
+   * Validates relational boundaries and scopes update strictly to user.id.
    */
   static async updateTask(
     supabase: SupabaseClient,
     taskId: string,
     input: UpdateTaskInput
   ): Promise<{ data: TaskWithProgress | null; error: string | null }> {
+    const parsed = UpdateTaskSchema.safeParse(input);
+    if (!parsed.success) {
+      return { data: null, error: parsed.error.issues[0]?.message || 'Invalid update data' };
+    }
+
     try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        return { data: null, error: 'Unauthorized: No authenticated user session.' };
+      }
+
+      // Pre-validate relational ownership boundaries if project_id or parent_id are updated
+      if (parsed.data.project_id) {
+        const { data: project } = await supabase
+          .from('projects')
+          .select('id')
+          .eq('id', parsed.data.project_id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (!project) {
+          return { data: null, error: 'Selected project not found or belongs to another user.' };
+        }
+      }
+
+      if (parsed.data.parent_id) {
+        const { data: parentTask } = await supabase
+          .from('tasks')
+          .select('id')
+          .eq('id', parsed.data.parent_id)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (!parentTask) {
+          return { data: null, error: 'Selected parent task not found or belongs to another user.' };
+        }
+      }
+
       const { data: updated, error } = await supabase
         .from('tasks')
-        .update(input)
+        .update(parsed.data)
         .eq('id', taskId)
+        .eq('user_id', user.id)
         .select()
         .single();
 
@@ -121,6 +219,7 @@ export class TasksService {
         .from('tasks_with_progress')
         .select('*')
         .eq('id', updated.id)
+        .eq('user_id', user.id)
         .single();
 
       return { data: taskWithProgress as TaskWithProgress, error: null };
@@ -156,6 +255,7 @@ export class TasksService {
 
   /**
    * Reorders tasks by updating their sort_order values.
+   * Updates only within the authenticated user's scope.
    */
   static async reorderTasks(
     supabase: SupabaseClient,
@@ -163,16 +263,28 @@ export class TasksService {
     items: { id: string; sort_order: number }[]
   ): Promise<{ success: boolean; error: string | null }> {
     try {
-      const updates = items.map((item) => ({
-        id: item.id,
-        user_id: userId,
-        sort_order: item.sort_order,
-      }));
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
 
-      const { error } = await supabase.from('tasks').upsert(updates, { onConflict: 'id' });
+      if (authError || !user) {
+        return { success: false, error: 'Unauthorized: No active authenticated session.' };
+      }
 
-      if (error) {
-        return { success: false, error: TasksService.mapDatabaseError(error) };
+      const updatePromises = items.map((item) =>
+        supabase
+          .from('tasks')
+          .update({ sort_order: item.sort_order })
+          .eq('id', item.id)
+          .eq('user_id', user.id)
+      );
+
+      const results = await Promise.all(updatePromises);
+      const failed = results.find((r) => r.error);
+
+      if (failed && failed.error) {
+        return { success: false, error: TasksService.mapDatabaseError(failed.error) };
       }
 
       return { success: true, error: null };
@@ -183,14 +295,29 @@ export class TasksService {
   }
 
   /**
-   * Deletes a task. Cascades down to direct and indirect subtasks & checklist items.
+   * Deletes a task owned by the authenticated user.
+   * Cascades down to direct and indirect subtasks & checklist items.
    */
   static async deleteTask(
     supabase: SupabaseClient,
     taskId: string
   ): Promise<{ success: boolean; error: string | null }> {
     try {
-      const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        return { success: false, error: 'Unauthorized: No authenticated user session.' };
+      }
+
+      const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', taskId)
+        .eq('user_id', user.id);
+
       if (error) return { success: false, error: TasksService.mapDatabaseError(error) };
       return { success: true, error: null };
     } catch (err: unknown) {

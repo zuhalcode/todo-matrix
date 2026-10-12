@@ -118,8 +118,11 @@ Multi-user security in this application is enforced using a **defense-in-depth m
 
 ---
 
-## 4. Application Limitations & Best Practices
+## 4. Application Identity Enforcement & Best Practices
 
-1. **Client-Provided `user_id`:** When performing inserts from Next.js, the client must supply `user_id: user.id` (or the application can use a default trigger if desired). If omitted, the `NOT NULL` constraint will reject the insert.
-2. **Bulk Operations:** Reordering multiple subtasks via `sort_order` should be executed inside a single transaction or batch update. RLS validates each updated row against `auth.uid() = user_id`.
-3. **Soft vs Hard Deletes:** Deleting a project or parent task cascades physically (`ON DELETE CASCADE`). If soft deletes are required in future phases, an `is_deleted` column can be introduced with corresponding index and view adjustments.
+1. **Authoritative Supabase Auth Identity:** The application derives user identity directly from the verified Supabase Auth session (`supabase.auth.getUser()`). Client-supplied `user_id` values in request arguments or form payloads are never trusted as proof of identity.
+2. **Database Defaults (`auth.uid()`):** `projects.user_id`, `tasks.user_id`, and `task_checklist_items.user_id` are configured with `DEFAULT auth.uid()`. Database triggers automatically enforce `user_id := auth.uid()` when missing and reject unauthenticated writes with `not_null_violation`.
+3. **Immutability of `user_id`:** Dedicated database triggers (`prevent_user_id_mutation`) on `projects`, `tasks`, and `task_checklist_items` strictly prohibit modifying `user_id` during updates (`restrict_violation`).
+4. **Relational Boundary Pre-Validation:** In addition to composite foreign keys (`tasks_project_fkey`, `tasks_parent_fkey`, `checklist_task_fkey`), the application services pre-validate that any referenced `project_id`, `parent_id`, or `task_id` belongs to the authenticated user before executing writes.
+5. **Subtask Project Coherence:** The database trigger `cascade_descendant_project` automatically synchronizes `project_id` across descendant subtasks when a parent task moves to another project.
+6. **Legacy Data Quarantine Strategy:** Unowned records without an identifiable Supabase Auth user are quarantined into `quarantined_unowned_records` rather than assigned to an arbitrary user, preventing data corruption and cross-tenant leakage.

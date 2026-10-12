@@ -80,11 +80,14 @@ src/
 
 ---
 
-## 2. Supabase Database Contract & RLS Compliance
+## 2. Supabase Database Contract, User Ownership & RLS Compliance
 
-1. **Zero Schema Alterations:**
-   * No invented database columns, functions, or tables.
-   * `projects`, `tasks`, and `task_checklist_items` conform 100% to the approved migrations.
+1. **User Ownership & Identity Source:**
+   * Supabase Auth (`auth.users`) is the authoritative single source of identity.
+   * `projects`, `tasks`, and `task_checklist_items` enforce `user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE`.
+   * Column defaults set to `auth.uid()`, backed by auto-assignment and immutability triggers (`trg_*_prevent_user_id_change`).
+   * Subtask project inheritance is preserved via `cascade_descendant_project` trigger.
+   * Unresolved legacy records are preserved in `quarantined_unowned_records` rather than arbitrarily assigned to any user.
 2. **Authoritative Progress Derivation:**
    * Reads from the `tasks_with_progress` view (`security_invoker = true`), which calculates:
      * Branch Tasks: $\text{ROUND}((N_{\text{completed}} / N_{\text{active}}) \times 100, 2)$ (ignoring canceled tasks).
@@ -133,7 +136,8 @@ src/
 
 ## 5. Verification Checklist & Test Suites
 
-Three comprehensive unit test suites were implemented:
+Four comprehensive unit test suites are established:
 1. `src/features/tasks/domain/progress.test.ts`: Verifies all 4 progress resolution rules from the approved database specification.
 2. `src/features/tasks/domain/hierarchy.test.ts`: Verifies direct self-parenting rejection, multi-hop cycle detection ($T_1 \to T_2 \to T_3 \to T_1$), and max depth limit ($>5$).
 3. `src/features/gamification/domain/progression.test.ts`: Verifies priority XP multipliers, level calculation, and achievement unlocking.
+4. `src/services/__tests__/ownership.test.ts`: Verifies Supabase Auth identity enforcement, rejection of forged client user IDs, pre-validation of relational ownership boundaries (`project_id`, `parent_id`, `task_id`), and user-scoped mutations.

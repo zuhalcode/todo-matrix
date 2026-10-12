@@ -149,7 +149,11 @@ export function TaskCard({
                 >
                   <Calendar className="w-3.5 h-3.5" />
                   <span>{formatDate(task.due_date)}</span>
-                  {isPastDue && <AlertCircle className="w-3.5 h-3.5" title="Overdue" />}
+                  {isPastDue && (
+                    <span title="Overdue">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                    </span>
+                  )}
                 </div>
               )}
 
