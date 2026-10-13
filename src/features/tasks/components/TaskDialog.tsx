@@ -201,10 +201,11 @@ export function TaskDialog({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            <label htmlFor="due-date" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Due Date
             </label>
             <Input
+              id="due-date"
               type="date"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
